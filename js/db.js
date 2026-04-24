@@ -1,13 +1,14 @@
 // ── Firebase Firestore wrapper ─────────────────────────────────────────────
 // Collections:
-//   sessions  — one doc per interview session       (id = sessId)
-//   answers   — one doc per saved answer            (id = sessId_qIdx)
-//   config    — shared app config: lpData, panelists (id = 'lpData' | 'panelists')
+//   sessions — interview sessions          (id = sessId)
+//   answers  — saved answers               (id = sessId_qIdx)
+//   config   — shared config: lpData, panelists
+//              stored as JSON strings to avoid Firestore nested-key issues
 
 import { initializeApp }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getFirestore, doc, setDoc, getDocs,
-         collection, query, where, writeBatch }
+         collection, query, where, writeBatch, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -22,82 +23,113 @@ const firebaseConfig = {
 const _fbApp = initializeApp(firebaseConfig);
 const _db    = getFirestore(_fbApp);
 
-// ── Helper: get document id for any collection ─────────────────────────────
-function _docId(store, obj) {
-  if (store === 'answers') return `${obj.sessionId}_${obj.questionIndex}`;
-  return obj.id;  // sessions and config both have an 'id' field
-}
-
-// ── initDB — kept for compatibility, nothing needed for Firestore ───────────
+// ── initDB ─────────────────────────────────────────────────────────────────
 function initDB() {
   console.log('✓ Firestore connected:', firebaseConfig.projectId);
 }
 
-// ── dbPut — create or overwrite a document ─────────────────────────────────
+// ── dbPut ──────────────────────────────────────────────────────────────────
 async function dbPut(store, obj) {
   try {
-    const id  = _docId(store, obj);
-    const ref = doc(_db, store, id);
-    await setDoc(ref, obj, { merge: true });
-    console.log(`dbPut OK [${store}/${id}]`);
+    let docId;
+    if      (store === 'answers') docId = `${obj.sessionId}_${obj.questionIndex}`;
+    else if (store === 'config')  docId = obj.id;
+    else                          docId = obj.id;
+
+    // For config store: serialise 'data' field as JSON string
+    // so Firestore doesn't choke on arbitrary object keys
+    let toStore = obj;
+    if (store === 'config' && obj.data !== undefined) {
+      toStore = { ...obj, data: JSON.stringify(obj.data) };
+    }
+
+    await setDoc(doc(_db, store, docId), toStore, { merge: true });
+    console.log(`✓ dbPut [${store}/${docId}]`);
   } catch (e) {
-    console.error(`dbPut FAILED [${store}]:`, e.message);
+    console.error(`✗ dbPut [${store}] failed:`, e.message);
   }
 }
 
-// ── dbGetAll — fetch all documents from a collection ───────────────────────
+// ── dbGetAll ───────────────────────────────────────────────────────────────
 async function dbGetAll(store, cb) {
   try {
     const snap    = await getDocs(collection(_db, store));
-    const results = snap.docs.map(d => d.data());
-    console.log(`dbGetAll [${store}]: ${results.length} docs`);
+    const results = snap.docs.map(d => {
+      const raw = d.data();
+      // Deserialise config data field back from JSON string
+      if (store === 'config' && typeof raw.data === 'string') {
+        try { raw.data = JSON.parse(raw.data); } catch(_) {}
+      }
+      return raw;
+    });
+    console.log(`✓ dbGetAll [${store}]: ${results.length} docs`);
     cb(results);
   } catch (e) {
-    console.error(`dbGetAll FAILED [${store}]:`, e.message);
+    console.error(`✗ dbGetAll [${store}] failed:`, e.message);
     cb([]);
   }
 }
 
-// ── dbGetByIdx — fetch answers for a specific session ──────────────────────
+// ── dbGetByIdx ─────────────────────────────────────────────────────────────
 async function dbGetByIdx(store, indexName, val, cb) {
   try {
-    // 'sid' is the legacy index name from IndexedDB — maps to 'sessionId' field
     const field = (indexName === 'sid') ? 'sessionId' : indexName;
     const q     = query(collection(_db, store), where(field, '==', val));
     const snap  = await getDocs(q);
     const results = snap.docs.map(d => d.data());
-    console.log(`dbGetByIdx [${store}] where ${field}==${val}: ${results.length} docs`);
+    console.log(`✓ dbGetByIdx [${store}] ${field}==${val}: ${results.length} docs`);
     cb(results);
   } catch (e) {
-    console.error(`dbGetByIdx FAILED [${store}]:`, e.message);
+    console.error(`✗ dbGetByIdx [${store}] failed:`, e.message);
     cb([]);
   }
 }
 
-// ── dbClear — delete ALL documents in a collection ─────────────────────────
+// ── dbClear ────────────────────────────────────────────────────────────────
 async function dbClear(store) {
   try {
     const snap  = await getDocs(collection(_db, store));
     const batch = writeBatch(_db);
     snap.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
-    console.log(`dbClear OK [${store}]: ${snap.docs.length} docs deleted`);
+    console.log(`✓ dbClear [${store}]: ${snap.docs.length} docs deleted`);
   } catch (e) {
-    console.error(`dbClear FAILED [${store}]:`, e.message);
+    console.error(`✗ dbClear [${store}] failed:`, e.message);
   }
 }
 
-// ── saveAns — upsert an answer (same session+question always overwrites) ────
+// ── saveAns ────────────────────────────────────────────────────────────────
 async function saveAns(ans) {
   await dbPut('answers', ans);
 }
 
-// ── Expose all functions as window globals so app.js can call them ─────────
-window.initDB     = initDB;
-window.dbPut      = dbPut;
-window.dbGetAll   = dbGetAll;
-window.dbGetByIdx = dbGetByIdx;
-window.dbClear    = dbClear;
-window.saveAns    = saveAns;
+// ── listenConfig ───────────────────────────────────────────────────────────
+// Real-time listener on the config collection.
+// Fires immediately with current data, then again whenever any config doc changes.
+// cb receives array of decoded config docs.
+function listenConfig(cb) {
+  return onSnapshot(collection(_db, 'config'), snap => {
+    const results = snap.docs.map(d => {
+      const raw = d.data();
+      if (typeof raw.data === 'string') {
+        try { raw.data = JSON.parse(raw.data); } catch(_) {}
+      }
+      return raw;
+    });
+    console.log(`↻ listenConfig: ${results.length} config docs`);
+    cb(results);
+  }, e => {
+    console.error('✗ listenConfig failed:', e.message);
+  });
+}
 
-console.log('✓ db.js module loaded — Firebase functions exposed to window');
+// ── Expose globals ─────────────────────────────────────────────────────────
+window.initDB       = initDB;
+window.dbPut        = dbPut;
+window.dbGetAll     = dbGetAll;
+window.dbGetByIdx   = dbGetByIdx;
+window.dbClear      = dbClear;
+window.saveAns      = saveAns;
+window.listenConfig = listenConfig;
+
+console.log('✓ db.js loaded — Firebase ready');

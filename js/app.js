@@ -645,37 +645,72 @@ function showToast(msg) {
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
+let _configListenerStarted = false;
+
 function boot() {
-  if (typeof window.initDB !== 'function') {
+  if (typeof window.initDB !== 'function' || typeof window.listenConfig !== 'function') {
     setTimeout(boot, 50);
     return;
   }
   initDB();
-  console.log('Boot: loading shared config from Firestore...');
+  console.log('Boot: starting real-time config listener...');
 
-  // Load shared question bank and panelists from Firestore config collection
-  window.dbGetAll('config', configs => {
-    console.log('Boot: config docs received:', configs.length);
+  // listenConfig fires immediately with current data, then on every change.
+  // This handles: initial load, auto-refresh when another user changes config.
+  window.listenConfig(configs => {
+    let lpUpdated      = false;
+    let panelUpdated   = false;
+
     configs.forEach(cfg => {
       if (cfg.id === 'lpData' && cfg.data) {
-        console.log('Boot: loading lpData from Firestore');
-        lpData = migrateLpData(cfg.data);
-        localStorage.setItem('lpData_aagna', JSON.stringify(lpData));
+        const incoming = migrateLpData(cfg.data);
+        // Only update if different from current (avoid overwriting local mid-edit)
+        const incomingStr = JSON.stringify(incoming);
+        const currentStr  = JSON.stringify(lpData);
+        if (incomingStr !== currentStr) {
+          console.log('↻ lpData updated from Firestore');
+          lpData = incoming;
+          localStorage.setItem('lpData_aagna', JSON.stringify(lpData));
+          lpUpdated = true;
+        }
       }
       if (cfg.id === 'panelists' && Array.isArray(cfg.data)) {
-        console.log('Boot: loading panelists from Firestore:', cfg.data);
-        panelists = cfg.data;
-        localStorage.setItem('panelists_aagna', JSON.stringify(panelists));
+        const incomingStr = JSON.stringify(cfg.data);
+        const currentStr  = JSON.stringify(panelists);
+        if (incomingStr !== currentStr) {
+          console.log('↻ panelists updated from Firestore');
+          panelists = cfg.data;
+          localStorage.setItem('panelists_aagna', JSON.stringify(panelists));
+          panelUpdated = true;
+        }
       }
     });
-    renderCatList();
-    renderQEditor();
-    renderPanelists();
-    refreshCatDd();
-    refreshIvDd();
-    initSpeech();
-    startSession('__rnd__');
-    console.log('Boot complete');
+
+    if (!_configListenerStarted) {
+      // First fire — do full init
+      _configListenerStarted = true;
+      renderCatList();
+      renderQEditor();
+      renderPanelists();
+      refreshCatDd();
+      refreshIvDd();
+      initSpeech();
+      startSession('__rnd__');
+      console.log('Boot complete');
+    } else {
+      // Subsequent fires — only re-render what changed
+      if (lpUpdated) {
+        renderCatList();
+        renderQEditor();
+        refreshCatDd();
+        showToast('Question bank updated by another user');
+      }
+      if (panelUpdated) {
+        renderPanelists();
+        refreshIvDd();
+        showToast('Panel list updated by another user');
+      }
+    }
   });
 }
 boot();
