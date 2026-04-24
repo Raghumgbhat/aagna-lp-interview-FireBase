@@ -1,21 +1,21 @@
 /* ── RESET & ROOT ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #EEF2F7;
+  --bg: #D6EAF8;
   --sf: #FFFFFF;
-  --sf2: #F4F7FB;
-  --sf3: #E8EDF5;
-  --bd: #D0D8E8;
-  --bd2: #B0BDD4;
-  --navy: #0F1F3D;
-  --navy2: #1A3260;
+  --sf2: #EBF5FB;
+  --sf3: #D6EAF8;
+  --bd: #AED6F1;
+  --bd2: #85C1E9;
+  --navy: #1A5276;
+  --navy2: #154360;
   --slate: #2E4070;
-  --mid: #4A5E82;
-  --muted: #6B7FA0;
-  --hint: #A8B6CC;
-  --acc: #1E5FD4;
-  --acc-lt: #E8F0FC;
-  --acc-dk: #154BB0;
+  --mid: #2E86C1;
+  --muted: #5D8AA8;
+  --hint: #85C1E9;
+  --acc: #2E86C1;
+  --acc-lt: #D6EAF8;
+  --acc-dk: #1A6FA0;
   --grn: #0D7A55;
   --grn-lt: #E4F5EF;
   --amb: #965C00;
@@ -43,7 +43,7 @@ button, input, select, textarea { font-family: var(--fn); }
 
 /* ── HEADER ── */
 .hdr {
-  background: var(--navy);
+  background: linear-gradient(135deg, #1A5276 0%, #2E86C1 100%);
   padding: 0 24px;
   height: 56px;
   display: flex;
