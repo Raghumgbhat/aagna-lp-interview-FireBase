@@ -24,8 +24,21 @@ let sessStartTime = null;
 const AV_COLORS = ['#0F1F3D','#1E5FD4','#0D7A55','#4D35A8','#965C00','#B52B27','#1A3260','#2E4070'];
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-function saveLP()    { localStorage.setItem('lpData_aagna',    JSON.stringify(lpData));    }
-function savePanel() { localStorage.setItem('panelists_aagna', JSON.stringify(panelists)); }
+function saveLP() {
+  localStorage.setItem('lpData_aagna', JSON.stringify(lpData));
+  // Also save to Firestore so all users share the same question bank
+  if (typeof window.dbPut === 'function') {
+    window.dbPut('config', { id: 'lpData', data: lpData, updatedAt: new Date().toISOString() });
+  }
+}
+
+function savePanel() {
+  localStorage.setItem('panelists_aagna', JSON.stringify(panelists));
+  // Also save to Firestore so all users share the same panel list
+  if (typeof window.dbPut === 'function') {
+    window.dbPut('config', { id: 'panelists', data: panelists, updatedAt: new Date().toISOString() });
+  }
+}
 function esc(s)      { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 function shuffle(a)  { return [...a].sort(() => Math.random() - .5); }
 function initials(n) { return n.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2); }
@@ -249,22 +262,23 @@ function startSession(catVal) {
       expectations: item.expectations || ''
     }));
   }
-  sessAns      = {};
-  curIdx       = 0;
-  curRating    = '';
-  sessId       = 's_' + Date.now();
+  sessAns       = {};
+  curIdx        = 0;
+  curRating     = '';
+  sessId        = 's_' + Date.now();
   sessStartTime = new Date().toISOString();
+  // NOTE: do NOT save to DB here — only save when user actually saves an answer
+  // This prevents ghost "Unknown" records appearing on every page load
 
   if (sessQs.length) {
-    dbPut('sessions', buildSess());
     renderQList();
     loadQ(0);
   } else {
-    document.getElementById('q-list').innerHTML       = '';
-    document.getElementById('q-txt').textContent      = 'No questions in this category. Add some in the Question Bank.';
-    document.getElementById('q-txt').style.color      = '#6B7FA0';
-    document.getElementById('q-lp').textContent       = '—';
-    document.getElementById('q-num').textContent      = '—';
+    document.getElementById('q-list').innerHTML  = '';
+    document.getElementById('q-txt').textContent = 'No questions in this category. Add some in the Question Bank.';
+    document.getElementById('q-txt').style.color = '#6B7FA0';
+    document.getElementById('q-lp').textContent  = '—';
+    document.getElementById('q-num').textContent = '—';
     clearFields();
     updateProg();
   }
@@ -622,16 +636,32 @@ function showToast(msg) {
 // db.js is a module — wait for it to expose globals before booting
 function boot() {
   if (typeof window.initDB !== 'function') {
-    setTimeout(boot, 50);   // retry every 50ms until module is ready
+    setTimeout(boot, 50);
     return;
   }
   initDB();
-  renderCatList();
-  renderQEditor();
-  renderPanelists();
-  refreshCatDd();
-  refreshIvDd();
-  initSpeech();
-  startSession('__rnd__');
+
+  // Load shared question bank and panelists from Firestore
+  // Falls back to localStorage / defaults if Firestore is unavailable
+  window.dbGetAll('config', configs => {
+    configs.forEach(cfg => {
+      if (cfg.id === 'lpData' && cfg.data) {
+        lpData = migrateLpData(cfg.data);
+        localStorage.setItem('lpData_aagna', JSON.stringify(lpData));
+      }
+      if (cfg.id === 'panelists' && Array.isArray(cfg.data)) {
+        panelists = cfg.data;
+        localStorage.setItem('panelists_aagna', JSON.stringify(panelists));
+      }
+    });
+    // Render everything after loading shared config
+    renderCatList();
+    renderQEditor();
+    renderPanelists();
+    refreshCatDd();
+    refreshIvDd();
+    initSpeech();
+    startSession('__rnd__');
+  });
 }
 boot();

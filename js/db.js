@@ -32,15 +32,16 @@ function initDB() {
 }
 
 // ── dbPut — upsert a document ───────────────────────────────────────────────
-// store = 'sessions' | 'answers'
-// obj must have an 'id' field for sessions; answers use sessId_qIdx as id
+// store = 'sessions' | 'answers' | 'config'
 async function dbPut(store, obj) {
   try {
-    const docId = store === 'answers'
-      ? `${obj.sessionId}_${obj.questionIndex}`
-      : obj.id;
+    let docId;
+    if (store === 'answers')  docId = `${obj.sessionId}_${obj.questionIndex}`;
+    else if (store === 'config') docId = obj.id;
+    else docId = obj.id;
     const ref = doc(_db, store, docId);
     await setDoc(ref, obj, { merge: true });
+    _cache[store] = _cache[store] || {};
     _cache[store][docId] = obj;
   } catch (e) {
     console.error('dbPut error', e);
