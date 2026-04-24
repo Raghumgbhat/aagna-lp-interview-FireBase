@@ -1,15 +1,14 @@
 // ── Firebase Firestore wrapper ─────────────────────────────────────────────
-// Replaces IndexedDB. All function signatures are identical to the old db.js
-// so app.js requires zero changes.
-//
-// Collections in Firestore:
-//   sessions  — one document per interview session (id = sessId)
-//   answers   — one document per saved answer (id = sessId_qIdx)
+// Collections:
+//   sessions  — one doc per interview session       (id = sessId)
+//   answers   — one doc per saved answer            (id = sessId_qIdx)
+//   config    — shared app config: lpData, panelists (id = 'lpData' | 'panelists')
 
-import { initializeApp }                          from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getFirestore, doc, setDoc, getDoc,
-         getDocs, collection, query, where,
-         deleteDoc, writeBatch }                   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { initializeApp }
+  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getFirestore, doc, setDoc, getDocs,
+         collection, query, where, writeBatch }
+  from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const firebaseConfig = {
   apiKey:            "AIzaSyDAvxjowog8dWpO6hxEu3zcyBFI0oAcfgI",
@@ -20,88 +19,85 @@ const firebaseConfig = {
   appId:             "1:791245265549:web:378482f2e47de856bda0c4"
 };
 
-const _app = initializeApp(firebaseConfig);
-const _db  = getFirestore(_app);
+const _fbApp = initializeApp(firebaseConfig);
+const _db    = getFirestore(_fbApp);
 
-// ── keep a tiny in-memory cache so PDF export works immediately after save ──
-const _cache = { sessions: {}, answers: {} };
-
-// ── initDB — nothing to do for Firestore, kept for compatibility ────────────
-function initDB() {
-  console.log('Firestore ready');
+// ── Helper: get document id for any collection ─────────────────────────────
+function _docId(store, obj) {
+  if (store === 'answers') return `${obj.sessionId}_${obj.questionIndex}`;
+  return obj.id;  // sessions and config both have an 'id' field
 }
 
-// ── dbPut — upsert a document ───────────────────────────────────────────────
-// store = 'sessions' | 'answers' | 'config'
+// ── initDB — kept for compatibility, nothing needed for Firestore ───────────
+function initDB() {
+  console.log('✓ Firestore connected:', firebaseConfig.projectId);
+}
+
+// ── dbPut — create or overwrite a document ─────────────────────────────────
 async function dbPut(store, obj) {
   try {
-    let docId;
-    if (store === 'answers')  docId = `${obj.sessionId}_${obj.questionIndex}`;
-    else if (store === 'config') docId = obj.id;
-    else docId = obj.id;
-    const ref = doc(_db, store, docId);
+    const id  = _docId(store, obj);
+    const ref = doc(_db, store, id);
     await setDoc(ref, obj, { merge: true });
-    _cache[store] = _cache[store] || {};
-    _cache[store][docId] = obj;
+    console.log(`dbPut OK [${store}/${id}]`);
   } catch (e) {
-    console.error('dbPut error', e);
+    console.error(`dbPut FAILED [${store}]:`, e.message);
   }
 }
 
-// ── dbGetAll — get all documents in a collection ────────────────────────────
+// ── dbGetAll — fetch all documents from a collection ───────────────────────
 async function dbGetAll(store, cb) {
   try {
-    const snap = await getDocs(collection(_db, store));
+    const snap    = await getDocs(collection(_db, store));
     const results = snap.docs.map(d => d.data());
-    // update cache
-    results.forEach(r => {
-      const id = store === 'answers' ? `${r.sessionId}_${r.questionIndex}` : r.id;
-      _cache[store][id] = r;
-    });
+    console.log(`dbGetAll [${store}]: ${results.length} docs`);
     cb(results);
   } catch (e) {
-    console.error('dbGetAll error', e);
+    console.error(`dbGetAll FAILED [${store}]:`, e.message);
     cb([]);
   }
 }
 
-// ── dbGetByIdx — get answers by sessionId ───────────────────────────────────
+// ── dbGetByIdx — fetch answers for a specific session ──────────────────────
 async function dbGetByIdx(store, indexName, val, cb) {
   try {
-    const q   = query(collection(_db, store), where(indexName === 'sid' ? 'sessionId' : indexName, '==', val));
-    const snap = await getDocs(q);
+    // 'sid' is the legacy index name from IndexedDB — maps to 'sessionId' field
+    const field = (indexName === 'sid') ? 'sessionId' : indexName;
+    const q     = query(collection(_db, store), where(field, '==', val));
+    const snap  = await getDocs(q);
     const results = snap.docs.map(d => d.data());
+    console.log(`dbGetByIdx [${store}] where ${field}==${val}: ${results.length} docs`);
     cb(results);
   } catch (e) {
-    console.error('dbGetByIdx error', e);
+    console.error(`dbGetByIdx FAILED [${store}]:`, e.message);
     cb([]);
   }
 }
 
-// ── dbClear — delete all documents in a collection ─────────────────────────
+// ── dbClear — delete ALL documents in a collection ─────────────────────────
 async function dbClear(store) {
   try {
     const snap  = await getDocs(collection(_db, store));
     const batch = writeBatch(_db);
     snap.docs.forEach(d => batch.delete(d.ref));
     await batch.commit();
-    _cache[store] = {};
+    console.log(`dbClear OK [${store}]: ${snap.docs.length} docs deleted`);
   } catch (e) {
-    console.error('dbClear error', e);
+    console.error(`dbClear FAILED [${store}]:`, e.message);
   }
 }
 
-// ── saveAns — upsert an answer document ────────────────────────────────────
-// Uses sessId_qIdx as the document id so re-saving the same question
-// always overwrites rather than creating duplicates.
+// ── saveAns — upsert an answer (same session+question always overwrites) ────
 async function saveAns(ans) {
   await dbPut('answers', ans);
 }
 
-// ── expose globals so app.js (non-module script) can call them ─────────────
-window.initDB      = initDB;
-window.dbPut       = dbPut;
-window.dbGetAll    = dbGetAll;
-window.dbGetByIdx  = dbGetByIdx;
-window.dbClear     = dbClear;
-window.saveAns     = saveAns;
+// ── Expose all functions as window globals so app.js can call them ─────────
+window.initDB     = initDB;
+window.dbPut      = dbPut;
+window.dbGetAll   = dbGetAll;
+window.dbGetByIdx = dbGetByIdx;
+window.dbClear    = dbClear;
+window.saveAns    = saveAns;
+
+console.log('✓ db.js module loaded — Firebase functions exposed to window');

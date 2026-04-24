@@ -26,17 +26,29 @@ const AV_COLORS = ['#0F1F3D','#1E5FD4','#0D7A55','#4D35A8','#965C00','#B52B27','
 // ── Helpers ────────────────────────────────────────────────────────────────
 function saveLP() {
   localStorage.setItem('lpData_aagna', JSON.stringify(lpData));
-  // Also save to Firestore so all users share the same question bank
   if (typeof window.dbPut === 'function') {
-    window.dbPut('config', { id: 'lpData', data: lpData, updatedAt: new Date().toISOString() });
+    window.dbPut('config', {
+      id:        'lpData',
+      data:      lpData,
+      updatedAt: new Date().toISOString()
+    }).then(() => console.log('✓ lpData saved to Firestore'))
+      .catch(e  => console.error('✗ lpData Firestore save failed:', e));
+  } else {
+    console.warn('dbPut not ready yet — lpData saved to localStorage only');
   }
 }
 
 function savePanel() {
   localStorage.setItem('panelists_aagna', JSON.stringify(panelists));
-  // Also save to Firestore so all users share the same panel list
   if (typeof window.dbPut === 'function') {
-    window.dbPut('config', { id: 'panelists', data: panelists, updatedAt: new Date().toISOString() });
+    window.dbPut('config', {
+      id:        'panelists',
+      data:      panelists,
+      updatedAt: new Date().toISOString()
+    }).then(() => console.log('✓ panelists saved to Firestore'))
+      .catch(e  => console.error('✗ panelists Firestore save failed:', e));
+  } else {
+    console.warn('dbPut not ready yet — panelists saved to localStorage only');
   }
 }
 function esc(s)      { return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
@@ -633,28 +645,29 @@ function showToast(msg) {
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────
-// db.js is a module — wait for it to expose globals before booting
 function boot() {
   if (typeof window.initDB !== 'function') {
     setTimeout(boot, 50);
     return;
   }
   initDB();
+  console.log('Boot: loading shared config from Firestore...');
 
-  // Load shared question bank and panelists from Firestore
-  // Falls back to localStorage / defaults if Firestore is unavailable
+  // Load shared question bank and panelists from Firestore config collection
   window.dbGetAll('config', configs => {
+    console.log('Boot: config docs received:', configs.length);
     configs.forEach(cfg => {
       if (cfg.id === 'lpData' && cfg.data) {
+        console.log('Boot: loading lpData from Firestore');
         lpData = migrateLpData(cfg.data);
         localStorage.setItem('lpData_aagna', JSON.stringify(lpData));
       }
       if (cfg.id === 'panelists' && Array.isArray(cfg.data)) {
+        console.log('Boot: loading panelists from Firestore:', cfg.data);
         panelists = cfg.data;
         localStorage.setItem('panelists_aagna', JSON.stringify(panelists));
       }
     });
-    // Render everything after loading shared config
     renderCatList();
     renderQEditor();
     renderPanelists();
@@ -662,6 +675,7 @@ function boot() {
     refreshIvDd();
     initSpeech();
     startSession('__rnd__');
+    console.log('Boot complete');
   });
 }
 boot();
