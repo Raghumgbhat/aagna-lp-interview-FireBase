@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow full read/write to sessions and answers collections
+    // The app has no login — all interviewers share one workspace
+    match /sessions/{docId} {
+      allow read, write: if true;
+    }
+    match /answers/{docId} {
+      allow read, write: if true;
+    }
+  }
+}
