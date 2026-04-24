@@ -570,7 +570,7 @@ function renderRecs() {
               <span>${fmtDt(s.startTime || s.createdAt)}</span>
               ${s.startTime ? `<span>Start: ${fmtTime(s.startTime)}</span>` : ''}
               ${s.endTime   ? `<span>End: ${fmtTime(s.endTime)}</span><span>Duration: ${duration(s.startTime, s.endTime)}</span>` : ''}
-              ${s.interviewer ? `<span style="font-size:14px;font-weight:700;color:#1A5276">Interviewer: ${s.interviewer}</span>` : ''}
+              ${s.interviewer ? `<span style="font-size:10px;font-weight:700;color:#1A5276">Interviewer: ${s.interviewer}</span>` : ''}
             </div>
             <div class="s-title">${s.candidateName || 'Unknown Candidate'}</div>
             <div class="s-pills">
